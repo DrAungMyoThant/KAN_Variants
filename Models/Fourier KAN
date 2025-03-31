@@ -1,0 +1,61 @@
+class FourierKANLayer(nn.Module):
+    def __init__(self, inputdim, outdim, gridsize, addbias=True):
+        super().__init__()
+        self.gridsize = gridsize
+        self.addbias  = addbias
+        self.inputdim = inputdim
+        self.outdim   = outdim
+
+        self.fouriercoeffs = nn.Parameter(
+            torch.randn(2, outdim, inputdim, gridsize)
+            / (np.sqrt(inputdim)*np.sqrt(gridsize))
+        )
+        if self.addbias:
+            self.bias = nn.Parameter(torch.zeros(1,outdim))
+
+    def forward(self, x):
+        xshp = x.shape
+        outshape = xshp[:-1] + (self.outdim,)
+        x = x.reshape(-1, self.inputdim)
+
+        k = torch.arange(1, self.gridsize+1, device=x.device).view(1,1,1,self.gridsize)
+        x_expanded = x.view(x.shape[0],1,x.shape[1],1)
+
+        c = torch.cos(k*x_expanded)
+        s = torch.sin(k*x_expanded)
+
+        y = torch.sum(c*self.fouriercoeffs[0:1], dim=(-2,-1))
+        y+= torch.sum(s*self.fouriercoeffs[1:2], dim=(-2,-1))
+
+        if self.addbias:
+            y += self.bias
+
+        return y.view(outshape)
+
+class Fourier_KAN(nn.Module):
+    def __init__(self, layers_hidden, grid_size=8):
+        super().__init__()
+        self.layers = nn.ModuleList([
+            FourierKANLayer(in_dim, out_dim, grid_size)
+            for in_dim, out_dim in zip(layers_hidden[:-1], layers_hidden[1:])
+        ])
+
+    def forward(self, x):
+        for layer in self.layers:
+            x = layer(x)
+        return x
+
+class CustomFourierKAN(nn.Module):
+    def __init__(self, eeg_input_dim, eye_input_dim, hidden_dim,
+                 num_classes, grid_size=8):
+        super().__init__()
+        self.eeg_branch = Fourier_KAN([eeg_input_dim, hidden_dim], grid_size)
+        self.eye_branch = Fourier_KAN([eye_input_dim, hidden_dim], grid_size)
+        self.fusion     = Fourier_KAN([2*hidden_dim, hidden_dim, num_classes],
+                                       grid_size)
+
+    def forward(self, eeg, eye):
+        x_eeg = self.eeg_branch(eeg)
+        x_eye = self.eye_branch(eye)
+        comb  = torch.cat((x_eeg, x_eye), dim=1)
+        return self.fusion(comb)
