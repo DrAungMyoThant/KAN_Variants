@@ -1,0 +1,96 @@
+###############################################################################
+# Summarizing All Model Results (including multiple Wavelets)
+###############################################################################
+import pandas as pd
+
+# 1) Initialize a dictionary for DataFrame columns
+results_data = {
+    "Model":      [],
+    "Accuracy":   [],
+    "Precision":  [],
+    "Recall":     [],
+    "F1":         [],
+    "AUC":        [],
+    "NumParams":  []
+}
+
+# 2) Add Wavelet KAN for each wavelet type
+for wv_type, metrics_dict in wavelet_kan_metrics.items():
+    # Skip shannon
+    if wv_type == "shannon":
+        continue
+
+    # Compute average metrics (if not already computed)
+    avg_wv = compute_average_metrics(metrics_dict)
+
+    # Populate results_data
+    results_data["Model"].append(f"Wavelet KAN ({wv_type})")
+    results_data["Accuracy"].append(avg_wv["accuracy"])
+    results_data["Precision"].append(avg_wv["precision"])
+    results_data["Recall"].append(avg_wv["recall"])
+    results_data["F1"].append(avg_wv["f1"])
+    results_data["AUC"].append(avg_wv["auc"])
+    results_data["NumParams"].append(avg_wv["num_parameters"])
+
+# 3) Add eKAN (Efficient KAN)
+results_data["Model"].append("Efficient KAN")
+results_data["Accuracy"].append(avg_efficient_kan["accuracy"])
+results_data["Precision"].append(avg_efficient_kan["precision"])
+results_data["Recall"].append(avg_efficient_kan["recall"])
+results_data["F1"].append(avg_efficient_kan["f1"])
+results_data["AUC"].append(avg_efficient_kan["auc"])
+results_data["NumParams"].append(avg_efficient_kan["num_parameters"])
+
+
+# 4) Add Jacobi-KAN
+results_data["Model"].append("Jacobi-KAN")
+results_data["Accuracy"].append(avg_jacobi_kan["accuracy"])
+results_data["Precision"].append(avg_jacobi_kan["precision"])
+results_data["Recall"].append(avg_jacobi_kan["recall"])
+results_data["F1"].append(avg_jacobi_kan["f1"])
+results_data["AUC"].append(avg_jacobi_kan["auc"])
+results_data["NumParams"].append(avg_jacobi_kan["num_parameters"])
+
+
+# 5) Add Chebyshev-KAN
+results_data["Model"].append("Chebyshev-KAN")
+results_data["Accuracy"].append(avg_cheby_kan["accuracy"])
+results_data["Precision"].append(avg_cheby_kan["precision"])
+results_data["Recall"].append(avg_cheby_kan["recall"])
+results_data["F1"].append(avg_cheby_kan["f1"])
+results_data["AUC"].append(avg_cheby_kan["auc"])
+results_data["NumParams"].append(avg_cheby_kan["num_parameters"])
+
+# 6) Add Fourier-KAN
+results_data["Model"].append("Fourier-KAN")
+results_data["Accuracy"].append(avg_fourier_kan["accuracy"])
+results_data["Precision"].append(avg_fourier_kan["precision"])
+results_data["Recall"].append(avg_fourier_kan["recall"])
+results_data["F1"].append(avg_fourier_kan["f1"])
+results_data["AUC"].append(avg_fourier_kan["auc"])
+results_data["NumParams"].append(avg_fourier_kan["num_parameters"])
+
+
+# 7) Add Hermite-KAN
+results_data["Model"].append("Hermite-KAN")
+results_data["Accuracy"].append(avg_hermite_kan["accuracy"])
+results_data["Precision"].append(avg_hermite_kan["precision"])
+results_data["Recall"].append(avg_hermite_kan["recall"])
+results_data["F1"].append(avg_hermite_kan["f1"])
+results_data["AUC"].append(avg_hermite_kan["auc"])
+results_data["NumParams"].append(avg_hermite_kan["num_parameters"])
+
+
+# 8) Add RBF-KAN
+results_data["Model"].append("RBF-KAN")
+results_data["Accuracy"].append(avg_rbf_kan["accuracy"])
+results_data["Precision"].append(avg_rbf_kan["precision"])
+results_data["Recall"].append(avg_rbf_kan["recall"])
+results_data["F1"].append(avg_rbf_kan["f1"])
+results_data["AUC"].append(avg_rbf_kan["auc"])
+results_data["NumParams"].append(avg_rbf_kan["num_parameters"])
+
+# 9) Convert to pandas DataFrame and print
+results_df = pd.DataFrame(results_data)
+print("\n=== Final Results Table ===")
+print(results_df.to_string(index=False))
