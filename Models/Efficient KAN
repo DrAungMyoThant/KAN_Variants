@@ -1,0 +1,40 @@
+class eKANLinear(nn.Module):
+    def __init__(self, in_features, out_features, grid_size=5):
+        super().__init__()
+        self.base_weight = nn.Parameter(torch.Tensor(out_features, in_features))
+        self.spline_weight= nn.Parameter(torch.Tensor(out_features, in_features, grid_size))
+
+        nn.init.kaiming_uniform_(self.base_weight,   a=math.sqrt(5))
+        nn.init.kaiming_uniform_(self.spline_weight, a=math.sqrt(5))
+
+    def forward(self, x):
+        base_out   = F.linear(F.silu(x), self.base_weight)
+        spline_val = torch.sum(self.spline_weight, dim=-1)
+        spline_out = F.linear(x, spline_val)
+        return base_out + spline_out
+
+class eKAN(nn.Module):
+    def __init__(self, layers_hidden, grid_size=5):
+        super().__init__()
+        self.layers = nn.ModuleList([
+            eKANLinear(in_f, out_f, grid_size)
+            for in_f, out_f in zip(layers_hidden[:-1], layers_hidden[1:])
+        ])
+
+    def forward(self, x):
+        for layer in self.layers:
+            x = layer(x)
+        return x
+
+class CustomEfficientKAN(nn.Module):
+    def __init__(self, eeg_dim, eye_dim, hidden_dim, num_classes, grid_size=5):
+        super().__init__()
+        self.eeg_branch = eKAN([eeg_dim, hidden_dim], grid_size)
+        self.eye_branch = eKAN([eye_dim, hidden_dim], grid_size)
+        self.fusion     = eKAN([2*hidden_dim, hidden_dim, num_classes], grid_size)
+
+    def forward(self, eeg_in, eye_in):
+        x_eeg = self.eeg_branch(eeg_in)
+        x_eye = self.eye_branch(eye_in)
+        combined = torch.cat((x_eeg, x_eye), dim=1)
+        return self.fusion(combined)
