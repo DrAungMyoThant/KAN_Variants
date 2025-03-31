@@ -1,5 +1,5 @@
 # ---------------------------------------------------------
-Cross-Validation for Wavelet KAN (Loop all wavelets)
+# Cross-Validation for Wavelet KAN (Loop all wavelets)
 # ---------------------------------------------------------
 
 # Create a dictionary to hold metrics for each wavelet type
