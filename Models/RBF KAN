@@ -1,0 +1,89 @@
+class RBFLinear(nn.Module):
+    def __init__(self, in_features, out_features,
+                 grid_min=-2., grid_max=2., num_grids=8,
+                 spline_weight_init_scale=0.1):
+        super().__init__()
+        self.grid_min = grid_min
+        self.grid_max = grid_max
+        self.num_grids= num_grids
+        self.grid = nn.Parameter(torch.linspace(grid_min, grid_max, num_grids),
+                                 requires_grad=False)
+        self.spline_weight = nn.Parameter(
+            torch.randn(in_features*num_grids, out_features)*spline_weight_init_scale
+        )
+
+    def forward(self, x):
+        x = x.unsqueeze(-1)
+        basis = torch.exp(-((x - self.grid)/(
+            (self.grid_max-self.grid_min)/(self.num_grids-1)))**2)
+        return basis.view(basis.size(0), -1).matmul(self.spline_weight)
+
+class RBFKANLayer(nn.Module):
+    def __init__(self, input_dim, output_dim,
+                 grid_min=-2., grid_max=2., num_grids=8,
+                 base_activation=nn.SiLU,
+                 spline_weight_init_scale=0.1,
+                 use_base_update=True):
+        super().__init__()
+        self.use_base_update = use_base_update
+        self.base_activation = base_activation()
+
+        self.rbf_linear = RBFLinear(input_dim, output_dim,
+                                    grid_min, grid_max, num_grids,
+                                    spline_weight_init_scale)
+        if use_base_update:
+            self.base_linear = nn.Linear(input_dim, output_dim)
+        else:
+            self.base_linear = None
+
+    def forward(self, x):
+        ret = self.rbf_linear(x)
+        if self.use_base_update:
+            base = self.base_linear(self.base_activation(x))
+            ret  = ret + base
+        return ret
+
+class RBF_KAN(nn.Module):
+    def __init__(self, layers_hidden,
+                 grid_min=-2., grid_max=2., grid_size=8,
+                 base_activation=nn.SiLU,
+                 use_base_update=True,
+                 spline_weight_init_scale=0.1):
+        super().__init__()
+        self.layers = nn.ModuleList([
+            RBFKANLayer(in_f, out_f,
+                        grid_min, grid_max, grid_size,
+                        base_activation, spline_weight_init_scale,
+                        use_base_update)
+            for in_f, out_f in zip(layers_hidden[:-1], layers_hidden[1:])
+        ])
+
+    def forward(self, x):
+        for layer in self.layers:
+            x = layer(x)
+        return x
+
+class CustomRBFKAN(nn.Module):
+    def __init__(self, eeg_input_dim, eye_input_dim, hidden_dim, num_classes,
+                 grid_min=-2., grid_max=2., grid_size=8,
+                 base_activation=nn.SiLU,
+                 use_base_update=True,
+                 spline_weight_init_scale=0.1):
+        super().__init__()
+        self.eeg_branch = RBF_KAN([eeg_input_dim, hidden_dim],
+                                  grid_min, grid_max, grid_size,
+                                  base_activation, use_base_update,
+                                  spline_weight_init_scale)
+        self.eye_branch = RBF_KAN([eye_input_dim, hidden_dim],
+                                  grid_min, grid_max, grid_size,
+                                  base_activation, use_base_update,
+                                  spline_weight_init_scale)
+        self.fusion = RBF_KAN([2*hidden_dim, hidden_dim, num_classes],
+                              grid_min, grid_max, grid_size,
+                              base_activation, use_base_update,
+                              spline_weight_init_scale)
+
+    def forward(self, eeg, eye):
+        x_eeg = self.eeg_branch(eeg)
+        x_eye = self.eye_branch(eye)
+        return self.fusion(torch.cat((x_eeg, x_eye), dim=1))
