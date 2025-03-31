@@ -1,0 +1,41 @@
+def plot_confusion_matrices(cm_dict, class_names):
+    """
+    Plots multiple confusion matrices in a single figure (subplots).
+    cm_dict: a dictionary { model_name: confusion_matrix_ndarray, ... }
+    class_names: list of class names for labeling
+    """
+    # Number of models
+    num_models = len(cm_dict)
+
+    # Decide on subplot arrangement (e.g., 2 columns)
+    cols = 3
+    rows = int(np.ceil(num_models / cols))
+
+    fig, axes = plt.subplots(rows, cols, figsize=(5*cols, 4*rows))
+    axes = axes.flatten()  # Flatten so we can iterate in one loop
+
+    for idx, (model_name, cm) in enumerate(cm_dict.items()):
+        # Normalize confusion matrix row-wise
+        cm_norm = cm.astype(float) / cm.sum(axis=1, keepdims=True)
+
+        # Plot on the appropriate subplot axis
+        ax = axes[idx]
+        sns.heatmap(
+            cm_norm,
+            annot=True,
+            fmt='.2f',
+            cmap='Blues',
+            xticklabels=class_names,
+            yticklabels=class_names,
+            ax=ax
+        )
+        ax.set_title(model_name)
+        ax.set_xlabel("Predicted")
+        ax.set_ylabel("True")
+
+    # Hide any unused subplots if num_models < rows*cols
+    for j in range(idx+1, len(axes)):
+        axes[j].axis('off')
+
+    plt.tight_layout()
+    plt.show()
