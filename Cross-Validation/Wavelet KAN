@@ -1,0 +1,81 @@
+# ---------------------------------------------------------
+Cross-Validation for Wavelet KAN (Loop all wavelets)
+# ---------------------------------------------------------
+
+# Create a dictionary to hold metrics for each wavelet type
+wavelet_kan_metrics = {
+    wv_type: {
+        'accuracy': [],
+        'precision': [],
+        'recall': [],
+        'f1': [],
+        'auc': [],
+        'confusion_matrix': np.zeros((num_classes, num_classes), dtype=int),
+        'num_parameters': None
+    }
+    for wv_type in global_params["wavelet_types"]
+}
+
+for wavelet_type in global_params["wavelet_types"]:
+    print(f"\n===== WAVELET TYPE: {wavelet_type} =====")
+
+    # Perform cross-validation for the current wavelet_type
+    for fold_idx, (train_idx, test_idx) in enumerate(skf.split(eeg_data_flat, labels_array)):
+        print(f"\n[Wavelet-KAN ({wavelet_type})] Fold {fold_idx+1}/{global_params['k_folds']}")
+
+        # Split data
+        X_train_eeg, X_test_eeg = eeg_data_flat[train_idx], eeg_data_flat[test_idx]
+        X_train_eye, X_test_eye = eye_data_flat[train_idx], eye_data_flat[test_idx]
+        y_train, y_test = labels_array[train_idx], labels_array[test_idx]
+
+        # Convert to tensors
+        X_train_eeg_t = torch.tensor(X_train_eeg, dtype=torch.float32)
+        X_test_eeg_t  = torch.tensor(X_test_eeg,  dtype=torch.float32)
+        X_train_eye_t = torch.tensor(X_train_eye, dtype=torch.float32)
+        X_test_eye_t  = torch.tensor(X_test_eye,  dtype=torch.float32)
+        y_train_t     = torch.tensor(y_train,     dtype=torch.long)
+        y_test_t      = torch.tensor(y_test,      dtype=torch.long)
+
+        # Create datasets and loaders
+        train_ds = TensorDataset(X_train_eeg_t, X_train_eye_t, y_train_t)
+        test_ds  = TensorDataset(X_test_eeg_t,  X_test_eye_t,  y_test_t)
+
+        train_loader = DataLoader(train_ds, batch_size=global_params["batch_size"], shuffle=True)
+        test_loader  = DataLoader(test_ds,  batch_size=global_params["batch_size"], shuffle=False)
+
+        # Instantiate the Wavelet KAN model
+        wavelet_kan_model = CustomWavKAN(
+            eeg_dim     = X_train_eeg_t.shape[1],
+            eye_dim     = X_train_eye_t.shape[1],
+            hidden_dim  = global_params["hidden_dim"],
+            num_classes = num_classes,
+            wavelet_type= wavelet_type
+        ).to(device)
+
+        # Train and Evaluate
+        train_losses_fold, val_losses_fold = train_and_evaluate_with_losses(
+            model        = wavelet_kan_model,
+            train_loader = train_loader,
+            test_loader  = test_loader,
+            epochs       = global_params["num_epochs"],
+            lr           = global_params["learning_rate"],
+            device       = device,
+            metrics_dict = wavelet_kan_metrics[wavelet_type],
+            n_classes    = num_classes
+        )
+        all_loss_curves[f"Wavelet KAN ({wavelet_type})"]["train"] = train_losses_fold
+        all_loss_curves[f"Wavelet KAN ({wavelet_type})"]["val"]   = val_losses_fold
+
+    # After finishing all folds for this wavelet_type, compute averages
+    avg_wavelet_metrics = compute_average_metrics(wavelet_kan_metrics[wavelet_type])
+    print(f"\nWavelet KAN (Type: {wavelet_type}) - Average CV Metrics:")
+    for k, v in avg_wavelet_metrics.items():
+        if k != "confusion_matrix":
+            print(f"  {k}: {v:.4f}")
+
+    # Plot confusion matrix for this wavelet type
+    plot_confusion_matrix(
+        avg_wavelet_metrics['confusion_matrix'],
+        class_names,
+        model_name=f"Wavelet KAN ({wavelet_type})"
+    )
