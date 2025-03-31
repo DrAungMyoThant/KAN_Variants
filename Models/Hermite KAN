@@ -1,0 +1,106 @@
+class HermiteKANLayer(nn.Module):
+    """
+    Computes Hermite polynomials (H_i) up to degree 'self.degree'
+    for each input dimension, then combines with hermite_coeffs.
+    Avoids in-place ops by building polynomials in a python list.
+    """
+    def __init__(self, input_dim, output_dim, degree):
+        super().__init__()
+        self.input_dim = input_dim
+        self.out_dim   = output_dim
+        self.degree    = degree
+
+        # shape: (input_dim, output_dim, degree+1)
+        self.hermite_coeffs = nn.Parameter(
+            torch.empty(input_dim, output_dim, degree + 1)
+        )
+        nn.init.normal_(
+            self.hermite_coeffs,
+            mean=0.0,
+            std=1/(input_dim*(degree+1))
+        )
+
+    def forward(self, x):
+        # x shape: (batch_size, input_dim)
+        x = x.reshape(-1, self.input_dim)  # ensure 2D
+        x = torch.tanh(x)
+
+        # We'll build polynomials in a python list: poly_list[i] = H_i
+        poly_list = []
+
+        # H0 = 1
+        h0 = torch.ones_like(x)  # shape: (batch, input_dim)
+        poly_list.append(h0)
+
+        # If degree >= 1 => H1 = 2x
+        if self.degree > 0:
+            h1 = 2*x
+            poly_list.append(h1)
+
+        # Recursion for H2..Hdegree:
+        #   Hn(x) = 2x * H_{n-1}(x) - 2(n-1)*H_{n-2}(x)
+        for i in range(2, self.degree + 1):
+            h_im1 = poly_list[i - 1]
+            h_im2 = poly_list[i - 2]
+            new_h = 2*x*h_im1 - 2*(i - 1)*h_im2
+            poly_list.append(new_h)
+
+        # Stack along dim=2 => shape: (batch, input_dim, degree+1)
+        hermite_stack = torch.stack(poly_list, dim=2)
+
+        # Multiply with hermite_coeffs => shape: (batch, out_dim)
+        # 'bid,iod->bo'
+        y = torch.einsum('bid,iod->bo', hermite_stack, self.hermite_coeffs)
+        return y.view(-1, self.out_dim)
+
+
+class HermiteKANLayerWithNorm(nn.Module):
+    """
+    Wraps HermiteKANLayer + LayerNorm for better gradient stability.
+    """
+    def __init__(self, input_dim, output_dim, degree):
+        super().__init__()
+        self.layer = HermiteKANLayer(input_dim, output_dim, degree)
+        self.ln    = nn.LayerNorm(output_dim)
+
+    def forward(self, x):
+        return self.ln(self.layer(x))
+
+
+class Hermite_KAN(nn.Module):
+    """
+    Stacks multiple HermiteKANLayerWithNorm layers to form a deeper net.
+    layers_hidden => e.g. [in_dim, hidden_dim, out_dim]
+    """
+    def __init__(self, layers_hidden, degree=4):
+        super().__init__()
+        self.layers = nn.ModuleList([
+            HermiteKANLayerWithNorm(in_f, out_f, degree)
+            for in_f, out_f in zip(layers_hidden[:-1], layers_hidden[1:])
+        ])
+
+    def forward(self, x):
+        for layer in self.layers:
+            x = layer(x)
+        return x
+
+
+class CustomHermiteKAN(nn.Module):
+    """
+    A Hermite-KAN-based classifier for EEG+Eye data fusion.
+    - EEG branch: Hermite_KAN([eeg_input_dim, hidden_dim], degree)
+    - Eye branch: Hermite_KAN([eye_input_dim, hidden_dim], degree)
+    - Fusion:     Hermite_KAN([2*hidden_dim, hidden_dim, num_classes], degree)
+    """
+    def __init__(self, eeg_input_dim, eye_input_dim, hidden_dim,
+                 num_classes, degree=4):
+        super().__init__()
+        self.eeg_branch = Hermite_KAN([eeg_input_dim, hidden_dim], degree)
+        self.eye_branch = Hermite_KAN([eye_input_dim, hidden_dim], degree)
+        self.fusion     = Hermite_KAN([2*hidden_dim, hidden_dim, num_classes], degree)
+
+    def forward(self, eeg, eye):
+        x_eeg = self.eeg_branch(eeg)  # shape: (batch, hidden_dim)
+        x_eye = self.eye_branch(eye)  # shape: (batch, hidden_dim)
+        comb  = torch.cat((x_eeg, x_eye), dim=1)
+        return self.fusion(comb)
