@@ -1,0 +1,20 @@
+def compute_average_metrics(metrics_dict):
+    avg = {}
+    avg['accuracy']   = np.mean(metrics_dict['accuracy'])
+    avg['precision']  = np.mean(metrics_dict['precision'])
+    avg['recall']     = np.mean(metrics_dict['recall'])
+    avg['f1']         = np.mean(metrics_dict['f1'])
+    avg['auc']        = np.nanmean(metrics_dict['auc'])
+    avg['confusion_matrix'] = metrics_dict['confusion_matrix']
+    avg['num_parameters']   = metrics_dict['num_parameters']
+    return avg
+
+def plot_confusion_matrix(cm, classes, model_name="Model"):
+    plt.figure(figsize=(6,4))
+    cm_norm = cm.astype(float) / cm.sum(axis=1, keepdims=True)
+    sns.heatmap(cm_norm, annot=True, fmt='.2f', cmap='Blues',
+                xticklabels=classes, yticklabels=classes)
+    plt.xlabel("Predicted")
+    plt.ylabel("True")
+    plt.title(f"Confusion Matrix: {model_name}")
+    plt.show()
