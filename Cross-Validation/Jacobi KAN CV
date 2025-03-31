@@ -1,5 +1,5 @@
 # ---------------------------------------------------------
-Cross-Validation for Jacobi-KAN
+# Cross-Validation for Jacobi-KAN
 # ---------------------------------------------------------
 jacobi_kan_metrics = {
     'accuracy': [],
