@@ -1,0 +1,108 @@
+class KANLinear(nn.Module):
+    def __init__(self, in_features, out_features, wavelet_type='dog'):
+        super(KANLinear, self).__init__()
+        self.in_features  = in_features
+        self.out_features = out_features
+        self.wavelet_type = wavelet_type
+
+        self.scale       = nn.Parameter(torch.ones(out_features, in_features))
+        self.translation = nn.Parameter(torch.zeros(out_features, in_features))
+        self.weight_base     = nn.Parameter(torch.Tensor(out_features, in_features))
+        self.wavelet_weights = nn.Parameter(torch.Tensor(out_features, in_features))
+
+        nn.init.kaiming_uniform_(self.weight_base,    a=math.sqrt(5))
+        nn.init.kaiming_uniform_(self.wavelet_weights, a=math.sqrt(5))
+
+        self.base_activation = nn.SiLU()
+        self.bn = nn.BatchNorm1d(out_features)
+
+    def wavelet_transform(self, x):
+        if x.dim() == 2:
+            x = x.unsqueeze(1)
+        tr_exp = self.translation.unsqueeze(0).expand(x.size(0), -1, -1)
+        sc_exp = self.scale.unsqueeze(0).expand(x.size(0), -1, -1)
+        x_scaled = (x - tr_exp) / (sc_exp + 1e-6)
+
+        # Implementation of different wavelet types
+        if self.wavelet_type == 'mexican_hat':
+            term1 = (x_scaled ** 2) - 1
+            term2 = torch.exp(-0.5 * x_scaled ** 2)
+            wavelet = (2 / (math.sqrt(3) * math.pi**0.25)) * term1 * term2
+        elif self.wavelet_type == 'morlet':
+            omega0 = 5.0  # Central frequency
+            real = torch.cos(omega0 * x_scaled)
+            envelope = torch.exp(-0.5 * x_scaled ** 2)
+            wavelet = envelope * real
+        elif self.wavelet_type == 'dog':
+            # Derivative of Gaussian Wavelet
+            wavelet = -x_scaled * torch.exp(-0.5 * x_scaled ** 2)
+        elif self.wavelet_type == 'meyer':
+            # Meyer Wavelet
+            v = torch.abs(x_scaled)
+            pi = math.pi
+
+            def meyer_aux(v):
+                return torch.where(
+                    v <= 0.5,
+                    torch.ones_like(v),
+                    torch.where(
+                        v >= 1.0,
+                        torch.zeros_like(v),
+                        torch.cos(pi / 2 * nu(2 * v - 1))
+                    )
+                )
+
+            def nu(t):
+                return t**4 * (35 - 84 * t + 70 * t**2 - 20 * t**3)
+
+            wavelet = torch.sin(pi * v) * meyer_aux(v)
+        elif self.wavelet_type == 'shannon':
+            pi = math.pi
+
+            # Helper function for sinc
+            def torch_sinc(x):
+                return torch.where(
+                    x == 0,
+                    torch.ones_like(x),
+                    torch.sin(pi * x) / (pi * x)
+                )
+            # Shannon wavelet = 2*sinc(2*x) - sinc(x)
+            wavelet = 2 * torch_sinc(2 * x_scaled) - torch_sinc(x_scaled)
+
+        else:
+            raise ValueError("Unsupported wavelet type")
+
+        wavelet_w = wavelet * self.wavelet_weights.unsqueeze(0).expand_as(wavelet)
+        return wavelet_w.sum(dim=2)
+
+    def forward(self, x):
+        w_out   = self.wavelet_transform(x)
+        base_out= F.linear(self.base_activation(x), self.weight_base)
+        out     = w_out + base_out
+        return self.bn(out)
+
+class KAN(nn.Module):
+    def __init__(self, layers_hidden, wavelet_type='dog'):
+        super(KAN, self).__init__()
+        self.layers = nn.ModuleList([
+            KANLinear(in_f, out_f, wavelet_type)
+            for in_f, out_f in zip(layers_hidden[:-1], layers_hidden[1:])
+        ])
+
+    def forward(self, x):
+        for layer in self.layers:
+            x = layer(x)
+        return x
+
+class CustomWavKAN(nn.Module):
+    def __init__(self, eeg_dim, eye_dim, hidden_dim, num_classes, wavelet_type='dog'):
+        super(CustomWavKAN, self).__init__()
+        self.eeg_branch = KAN([eeg_dim, hidden_dim], wavelet_type)
+        self.eye_branch = KAN([eye_dim, hidden_dim], wavelet_type)
+        self.fusion     = KAN([2*hidden_dim, hidden_dim, num_classes], wavelet_type)
+
+    def forward(self, eeg_input, eye_input):
+        x_eeg = self.eeg_branch(eeg_input)
+        x_eye = self.eye_branch(eye_input)
+        combined = torch.cat((x_eeg, x_eye), dim=1)
+        return self.fusion(combined)
