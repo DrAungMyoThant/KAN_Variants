@@ -1,0 +1,67 @@
+try:
+    from google.colab import drive
+    drive.mount('/content/drive')
+except:
+    print("Not in Colab or drive mount not needed.")
+
+eeg_file_dir = '/content/drive/MyDrive/EEG_DE_features/'
+eye_movement_file_dir = '/content/drive/MyDrive/Eye_movement_features/'
+
+def pad_data(data, target_shape):
+    pad_width = [
+        (0, target_shape[i] - data.shape[i]) if i < len(data.shape)
+        else (0, target_shape[i]) for i in range(len(target_shape))
+    ]
+    return np.pad(data, pad_width, mode='constant')
+
+all_data = []
+all_eye_data = []
+all_labels = []
+subjects = []
+
+for i in range(1, 17):
+    eeg_file_path = os.path.join(eeg_file_dir, f'{i}_123.npz')
+    eye_file_path = os.path.join(eye_movement_file_dir, f'{i}_123.npz')
+
+    eeg_npz = np.load(eeg_file_path, allow_pickle=True)
+    eeg_data = pickle.loads(eeg_npz['data'])
+    eeg_label = pickle.loads(eeg_npz['label'])
+
+    eye_npz = np.load(eye_file_path, allow_pickle=True)
+    eye_data = pickle.loads(eye_npz['data'])
+
+    for key in eeg_data.keys():
+        all_data.append(eeg_data[key])
+        all_eye_data.append(eye_data[key])
+        all_labels.append(eeg_label[key][0])
+        subjects.append(i)
+
+max_eeg_shape = np.max([d.shape for d in all_data], axis=0)
+max_eye_shape = np.max([d.shape for d in all_eye_data], axis=0)
+
+all_data_padded     = [pad_data(d, max_eeg_shape) for d in all_data]
+all_eye_data_padded = [pad_data(d, max_eye_shape) for d in all_eye_data]
+
+eeg_data_array = np.array(all_data_padded)
+eye_data_array = np.array(all_eye_data_padded)
+labels_array   = np.array(all_labels)
+
+print("EEG data shape:", eeg_data_array.shape)
+print("Eye data shape:", eye_data_array.shape)
+print("Labels shape:  ", labels_array.shape)
+
+eeg_data_flat = eeg_data_array.reshape(eeg_data_array.shape[0], -1)
+eye_data_flat = eye_data_array.reshape(eye_data_array.shape[0], -1)
+
+scaler_eeg = MinMaxScaler()
+scaler_eye = MinMaxScaler()
+
+eeg_data_flat = scaler_eeg.fit_transform(eeg_data_flat)
+eye_data_flat = scaler_eye.fit_transform(eye_data_flat)
+
+labels_array = labels_array.astype(int)
+
+num_classes = len(np.unique(labels_array))
+class_names = [f"Class {i}" for i in range(num_classes)]
+print("Class names:", class_names)
+print("Number of classes:", num_classes)
