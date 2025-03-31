@@ -1,0 +1,61 @@
+class ChebyKANLayer(nn.Module):
+    def __init__(self, input_dim, output_dim, degree):
+        super().__init__()
+        self.inputdim = input_dim
+        self.outdim   = output_dim
+        self.degree   = degree
+        self.epsilon  = 1e-6
+
+        self.cheby_coeffs = nn.Parameter(torch.empty(input_dim, output_dim, degree+1))
+        nn.init.normal_(self.cheby_coeffs, mean=0.0,
+                        std=1/(input_dim*(degree+1)))
+
+        self.register_buffer("arange", torch.arange(degree+1))
+
+    def forward(self, x):
+        x = torch.tanh(x)
+        x = x.view(-1, self.inputdim, 1).expand(-1, -1, self.degree+1)
+        x = torch.clamp(x, -1+self.epsilon, 1-self.epsilon)
+        x = x.acos()
+        x = x * self.arange
+        x = x.cos()
+
+        y = torch.einsum('bid,iod->bo', x, self.cheby_coeffs)
+        return y.view(-1, self.outdim)
+
+class ChebyKANLayerWithNorm(nn.Module):
+    def __init__(self, input_dim, output_dim, degree):
+        super().__init__()
+        self.layer = ChebyKANLayer(input_dim, output_dim, degree)
+        self.ln    = nn.LayerNorm(output_dim)
+
+    def forward(self, x):
+        return self.ln(self.layer(x))
+
+class Chebyshev_KAN(nn.Module):
+    def __init__(self, layers_hidden, degree=4):
+        super().__init__()
+        self.layers = nn.ModuleList([
+            ChebyKANLayerWithNorm(in_f, out_f, degree)
+            for in_f, out_f in zip(layers_hidden[:-1], layers_hidden[1:])
+        ])
+
+    def forward(self, x):
+        for layer in self.layers:
+            x = layer(x)
+        return x
+
+class CustomChebyKAN(nn.Module):
+    def __init__(self, eeg_input_dim, eye_input_dim, hidden_dim,
+                 num_classes, degree=4):
+        super().__init__()
+        self.eeg_branch = Chebyshev_KAN([eeg_input_dim, hidden_dim], degree)
+        self.eye_branch = Chebyshev_KAN([eye_input_dim, hidden_dim], degree)
+        self.fusion     = Chebyshev_KAN([2*hidden_dim, hidden_dim, num_classes],
+                                         degree)
+
+    def forward(self, eeg, eye):
+        x_eeg = self.eeg_branch(eeg)
+        x_eye = self.eye_branch(eye)
+        combined = torch.cat((x_eeg, x_eye), dim=1)
+        return self.fusion(combined)
