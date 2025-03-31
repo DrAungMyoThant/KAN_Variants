@@ -1,0 +1,120 @@
+class JacobiKANLayer(nn.Module):
+    """
+    A single layer that computes Jacobi polynomial features of 'x'
+    and multiplies them by learnable jacobi_coeffs. This avoids
+    in-place ops by building a python list of polynomials.
+    """
+    def __init__(self, input_dim, output_dim, degree, a=1.0, b=1.0):
+        super().__init__()
+        self.inputdim = input_dim
+        self.outdim   = output_dim
+        self.a        = a
+        self.b        = b
+        self.degree   = degree
+
+        # Param: shape (input_dim, output_dim, degree+1)
+        self.jacobi_coeffs = nn.Parameter(
+            torch.empty(input_dim, output_dim, degree + 1)
+        )
+        nn.init.normal_(
+            self.jacobi_coeffs,
+            mean=0.0,
+            std=1/(input_dim*(degree+1))
+        )
+
+    def forward(self, x):
+        # x shape: (batch_size, input_dim)
+        # Reshape to (batch, input_dim), apply tanh
+        x = x.view(-1, self.inputdim)
+        x = torch.tanh(x)
+
+        # We'll build polynomials in a python list: poly_list[i] = P_i
+        poly_list = []
+
+        # P0 = 1
+        p0 = torch.ones_like(x)
+        poly_list.append(p0)
+
+        # If degree > 0 => P1
+        if self.degree > 0:
+            # P1 = ((a - b) + (a + b + 2)*x) / 2
+            p1 = ((self.a - self.b) + (self.a + self.b + 2)*x) / 2
+            poly_list.append(p1)
+
+        # Recursion for P2..Pdegree
+        for i in range(2, self.degree + 1):
+            theta_k  = (2*i + self.a + self.b)*(2*i + self.a + self.b - 1)/(2*i*(i + self.a + self.b))
+            theta_k1 = ((2*i + self.a + self.b - 1)*(self.a*self.a - self.b*self.b) /
+                        (2*i*(i + self.a + self.b)*(2*i + self.a + self.b - 2)))
+            theta_k2 = ((i + self.a - 1)*(i + self.b - 1)*(2*i + self.a + self.b) /
+                        (i*(i + self.a + self.b)*(2*i + self.a + self.b - 2)))
+
+            p_im1 = poly_list[i - 1]  # P_{i-1}
+            p_im2 = poly_list[i - 2]  # P_{i-2}
+
+            # P_i = (theta_k*x + theta_k1)*P_{i-1} - theta_k2 * P_{i-2}
+            new_p = (theta_k*x + theta_k1)*p_im1 - theta_k2*p_im2
+            poly_list.append(new_p)
+
+        # Stack along dim=2 => shape: (batch, input_dim, degree+1)
+        jacobi_stack = torch.stack(poly_list, dim=2)
+
+        # Multiply with jacobi_coeffs => shape: (batch, outdim)
+        # 'bid,iod->bo'
+        y = torch.einsum('bid,iod->bo', jacobi_stack, self.jacobi_coeffs)
+        return y.view(-1, self.outdim)
+
+
+class JacobiKANLayerWithNorm(nn.Module):
+    """
+    Wraps JacobiKANLayer + LayerNorm to help gradient stability.
+    """
+    def __init__(self, input_dim, output_dim, degree, a=1.0, b=1.0):
+        super().__init__()
+        self.layer = JacobiKANLayer(input_dim, output_dim, degree, a, b)
+        self.ln    = nn.LayerNorm(output_dim)
+
+    def forward(self, x):
+        return self.ln(self.layer(x))
+
+
+class Jacobi_KAN(nn.Module):
+    """
+    Base Jacobi-KAN block with multiple JacobiKANLayers stacked:
+    layers_hidden => e.g. [in_dim, hidden_dim, ..., out_dim]
+    """
+    def __init__(self, layers_hidden, degree=3, a=1.0, b=1.0):
+        super().__init__()
+        self.layers = nn.ModuleList([
+            JacobiKANLayerWithNorm(in_f, out_f, degree, a, b)
+            for in_f, out_f in zip(layers_hidden[:-1], layers_hidden[1:])
+        ])
+
+    def forward(self, x):
+        for layer in self.layers:
+            x = layer(x)
+        return x
+
+
+class CustomJacobiKAN(nn.Module):
+    """
+    A full Jacobi-KAN-based classifier for EEG+Eye data fusion.
+    - EEG branch: Jacobi_KAN with [eeg_input_dim, hidden_dim]
+    - Eye branch: Jacobi_KAN with [eye_input_dim, hidden_dim]
+    - Fusion layer: Jacobi_KAN with [2*hidden_dim, hidden_dim, num_classes]
+    """
+    def __init__(self, eeg_input_dim, eye_input_dim, hidden_dim,
+                 num_classes, degree=3, a=1.0, b=1.0):
+        super().__init__()
+        self.eeg_branch = Jacobi_KAN([eeg_input_dim, hidden_dim],
+                                     degree, a, b)
+        self.eye_branch = Jacobi_KAN([eye_input_dim, hidden_dim],
+                                     degree, a, b)
+        self.fusion = Jacobi_KAN([2*hidden_dim, hidden_dim, num_classes],
+                                 degree, a, b)
+
+    def forward(self, eeg_input, eye_input):
+        x_eeg = self.eeg_branch(eeg_input)  # shape: (batch, hidden_dim)
+        x_eye = self.eye_branch(eye_input)  # shape: (batch, hidden_dim)
+        comb  = torch.cat((x_eeg, x_eye), dim=1)
+        return self.fusion(comb)
