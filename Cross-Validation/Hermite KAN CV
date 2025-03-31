@@ -1,0 +1,61 @@
+# ---------------------------------------------------------
+# Cross-Validation for Hermite-KAN
+# ---------------------------------------------------------
+hermite_kan_metrics = {
+    'accuracy': [],
+    'precision': [],
+    'recall': [],
+    'f1': [],
+    'auc': [],
+    'confusion_matrix': np.zeros((num_classes, num_classes), dtype=int),
+    'num_parameters': None
+}
+
+for fold_idx, (train_idx, test_idx) in enumerate(skf.split(eeg_data_flat, labels_array)):
+    print(f"\n[Hermite-KAN] Fold {fold_idx+1}/{global_params['k_folds']}")
+
+    X_train_eeg, X_test_eeg = eeg_data_flat[train_idx], eeg_data_flat[test_idx]
+    X_train_eye, X_test_eye = eye_data_flat[train_idx], eye_data_flat[test_idx]
+    y_train, y_test         = labels_array[train_idx], labels_array[test_idx]
+
+    X_train_eeg_t = torch.tensor(X_train_eeg, dtype=torch.float32)
+    X_test_eeg_t  = torch.tensor(X_test_eeg,  dtype=torch.float32)
+    X_train_eye_t = torch.tensor(X_train_eye, dtype=torch.float32)
+    X_test_eye_t  = torch.tensor(X_test_eye,  dtype=torch.float32)
+    y_train_t     = torch.tensor(y_train,     dtype=torch.long)
+    y_test_t      = torch.tensor(y_test,      dtype=torch.long)
+
+    train_ds = TensorDataset(X_train_eeg_t, X_train_eye_t, y_train_t)
+    test_ds  = TensorDataset(X_test_eeg_t,  X_test_eye_t,  y_test_t)
+    train_loader = DataLoader(train_ds, batch_size=global_params["batch_size"], shuffle=True)
+    test_loader  = DataLoader(test_ds,  batch_size=global_params["batch_size"], shuffle=False)
+
+    # Hermite-KAN model
+    hermite_model = CustomHermiteKAN(
+        eeg_input_dim = X_train_eeg_t.shape[1],
+        eye_input_dim = X_train_eye_t.shape[1],
+        hidden_dim    = global_params["hidden_dim"],
+        num_classes   = num_classes,
+        degree        = global_params["degree"]
+    ).to(device)
+
+    train_losses_fold, val_losses_fold = train_and_evaluate_with_losses(
+        model        = hermite_model,
+        train_loader = train_loader,
+        test_loader  = test_loader,
+        epochs       = global_params["num_epochs"],
+        lr           = global_params["learning_rate"],
+        device       = device,
+        metrics_dict = hermite_kan_metrics,
+        n_classes    = num_classes
+    )
+    all_loss_curves["Hermite-KAN"]["train"] = train_losses_fold
+    all_loss_curves["Hermite-KAN"]["val"]   = val_losses_fold
+
+avg_hermite_kan = compute_average_metrics(hermite_kan_metrics)
+print("\nHermite-KAN (Average CV) Metrics:")
+for k, v in avg_hermite_kan.items():
+    if k != "confusion_matrix":
+        print(f"  {k}: {v}")
+
+plot_confusion_matrix(avg_hermite_kan['confusion_matrix'], class_names, "Hermite-KAN")
