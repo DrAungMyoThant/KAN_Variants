@@ -1,0 +1,27 @@
+# Plot all TRAIN curves in one figure
+plt.figure(figsize=(10,6))
+for model_name, curve_dict in all_loss_curves.items():
+    train_curve = curve_dict["train"]
+    if len(train_curve)+1 > 0:
+        plt.plot(train_curve, label=f"{model_name} - Train")
+
+plt.title("Training Loss Curves for All Models")
+plt.xlabel("Epoch")
+plt.ylabel("Train Loss")
+plt.legend()
+plt.grid(True)
+plt.show()
+
+# Plot all VAL curves in another figure
+plt.figure(figsize=(10,6))
+for model_name, curve_dict in all_loss_curves.items():
+    val_curve = curve_dict["val"]
+    if len(val_curve)+1 > 0:
+        plt.plot(val_curve, label=f"{model_name} - Val")
+
+plt.title("Validation Loss Curves for All Models")
+plt.xlabel("Epoch")
+plt.ylabel("Validation Loss")
+plt.legend()
+plt.grid(False)
+plt.show()
